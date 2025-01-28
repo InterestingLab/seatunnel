@@ -59,4 +59,11 @@ public class TestJsonPathTransformIT extends TestSuiteBase {
                 container.executeJob("/json_path_transform/json_path_with_error_handle_way.conf");
         Assertions.assertEquals(0, execResult.getExitCode());
     }
+
+    @TestTemplate
+    public void testArrayType(TestContainer container) throws Exception {
+        Container.ExecResult execResult =
+                container.executeJob("/json_path_transform/json_path_array_map.conf");
+        Assertions.assertEquals(0, execResult.getExitCode());
+    }
 }

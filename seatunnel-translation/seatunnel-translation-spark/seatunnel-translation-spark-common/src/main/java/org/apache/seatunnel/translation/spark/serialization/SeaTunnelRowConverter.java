@@ -24,6 +24,7 @@ import org.apache.seatunnel.api.table.type.RowKind;
 import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
+import org.apache.seatunnel.api.table.type.SqlType;
 import org.apache.seatunnel.translation.serialization.RowConverter;
 import org.apache.seatunnel.translation.spark.utils.OffsetDateTimeUtils;
 
@@ -170,6 +171,13 @@ public class SeaTunnelRowConverter extends RowConverter<GenericRow> {
             return new WrappedArray.ofRef<>(new Object[0]);
         }
         int num = arrayData.length;
+        if (SqlType.MAP.equals(arrayType.getElementType().getSqlType())) {
+            Object[] arrayMapData = new Object[num];
+            for (int i = 0; i < num; i++) {
+                arrayMapData[i] = convert(arrayData[i], arrayType.getElementType());
+            }
+            return new WrappedArray.ofRef<>(arrayMapData);
+        }
         for (int i = 0; i < num; i++) {
             arrayData[i] = convert(arrayData[i], arrayType.getElementType());
         }
