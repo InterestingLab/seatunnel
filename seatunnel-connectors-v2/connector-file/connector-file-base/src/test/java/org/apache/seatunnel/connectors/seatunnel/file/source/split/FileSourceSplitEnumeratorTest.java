@@ -17,16 +17,24 @@
 
 package org.apache.seatunnel.connectors.seatunnel.file.source.split;
 
+import org.apache.seatunnel.shade.com.typesafe.config.Config;
+import org.apache.seatunnel.shade.com.typesafe.config.ConfigFactory;
+import org.apache.seatunnel.shade.com.typesafe.config.ConfigValueFactory;
+
 import org.apache.seatunnel.api.common.metrics.MetricsContext;
 import org.apache.seatunnel.api.event.EventListener;
 import org.apache.seatunnel.api.source.SourceEvent;
 import org.apache.seatunnel.api.source.SourceSplitEnumerator;
+import org.apache.seatunnel.connectors.seatunnel.file.config.BaseSourceConfigOptions;
+import org.apache.seatunnel.connectors.seatunnel.file.source.reader.TextReadStrategy;
+import org.apache.seatunnel.connectors.seatunnel.file.writer.OrcReadStrategyTest;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -34,11 +42,31 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.FS_DEFAULT_NAME_DEFAULT;
+
 @Slf4j
 public class FileSourceSplitEnumeratorTest {
 
+    public TextReadStrategy getTextReadStrategy() throws IOException {
+        TextReadStrategy textReadStrategy = new TextReadStrategy();
+        OrcReadStrategyTest.LocalConf localConf =
+                new OrcReadStrategyTest.LocalConf(FS_DEFAULT_NAME_DEFAULT);
+        textReadStrategy.init(localConf);
+        Config config = ConfigFactory.empty();
+        config =
+                config.withValue(
+                        BaseSourceConfigOptions.ROW_COUNT_PER_SPLIT.key(),
+                        ConfigValueFactory.fromAnyRef(1500000));
+        config =
+                config.withValue(
+                        BaseSourceConfigOptions.WHETHER_SPLIT_FILE.key(),
+                        ConfigValueFactory.fromAnyRef(true));
+        textReadStrategy.setPluginConfig(config);
+        return textReadStrategy;
+    }
+
     @Test
-    void assignSplitRoundTest() {
+    void assignSplitRoundTest() throws IOException {
         List<String> filePaths = new ArrayList<>();
         int fileSize = 10;
         int parallelism = 4;
@@ -84,7 +112,7 @@ public class FileSourceSplitEnumeratorTest {
                 };
 
         FileSourceSplitEnumerator fileSourceSplitEnumerator =
-                new FileSourceSplitEnumerator(context, filePaths);
+                new FileSourceSplitEnumerator(getTextReadStrategy(), context, filePaths);
         fileSourceSplitEnumerator.open();
 
         fileSourceSplitEnumerator.run();

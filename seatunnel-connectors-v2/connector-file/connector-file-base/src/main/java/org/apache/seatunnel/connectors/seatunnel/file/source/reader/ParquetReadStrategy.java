@@ -17,6 +17,8 @@
 
 package org.apache.seatunnel.connectors.seatunnel.file.source.reader;
 
+import org.apache.seatunnel.shade.com.typesafe.config.Config;
+
 import org.apache.seatunnel.api.source.Collector;
 import org.apache.seatunnel.api.table.catalog.TablePath;
 import org.apache.seatunnel.api.table.type.ArrayType;
@@ -31,14 +33,17 @@ import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 import org.apache.seatunnel.api.table.type.SqlType;
 import org.apache.seatunnel.common.exception.CommonError;
 import org.apache.seatunnel.common.exception.CommonErrorCodeDeprecated;
+import org.apache.seatunnel.connectors.seatunnel.file.config.BaseSourceConfigOptions;
 import org.apache.seatunnel.connectors.seatunnel.file.exception.FileConnectorErrorCode;
 import org.apache.seatunnel.connectors.seatunnel.file.exception.FileConnectorException;
+import org.apache.seatunnel.connectors.seatunnel.file.source.split.FileSourceSplit;
 
 import org.apache.avro.Conversions;
 import org.apache.avro.data.TimeConversions;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.util.Utf8;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.avro.AvroParquetReader;
@@ -66,8 +71,10 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
@@ -82,8 +89,102 @@ public class ParquetReadStrategy extends AbstractReadStrategy {
 
     private int[] indexes;
 
+    private boolean whetherSplitFile = BaseSourceConfigOptions.WHETHER_SPLIT_FILE.defaultValue();
+
+    @Override
+    public void setPluginConfig(Config pluginConfig) {
+        super.setPluginConfig(pluginConfig);
+        if (pluginConfig.hasPath(BaseSourceConfigOptions.WHETHER_SPLIT_FILE.key())) {
+            whetherSplitFile =
+                    pluginConfig.getBoolean(BaseSourceConfigOptions.WHETHER_SPLIT_FILE.key());
+        }
+    }
+
+    /**
+     * parquet file can only split by file block now. <br>
+     * user cannot customise the split count and size. <br>
+     *
+     * @param path file path
+     * @return splits
+     */
+    @Override
+    public Set<FileSourceSplit> getFileSourceSplits(String path) {
+        Set<FileSourceSplit> fileSourceSplits = new HashSet<>();
+        if (!whetherSplitFile) {
+            fileSourceSplits.add(new FileSourceSplit(path));
+            return fileSourceSplits;
+        }
+        ParquetMetadata metadata;
+        try (ParquetFileReader reader =
+                hadoopFileSystemProxy.doWithHadoopAuth(
+                        ((configuration, userGroupInformation) -> {
+                            HadoopInputFile hadoopInputFile =
+                                    HadoopInputFile.fromPath(new Path(path), configuration);
+                            return ParquetFileReader.open(hadoopInputFile);
+                        }))) {
+            metadata = reader.getFooter();
+        } catch (IOException e) {
+            String errorMsg =
+                    String.format("Create parquet reader for this file [%s] failed", path);
+            throw new FileConnectorException(
+                    CommonErrorCodeDeprecated.READER_OPERATION_FAILED, errorMsg, e);
+        }
+        if (metadata == null || CollectionUtils.isEmpty(metadata.getBlocks())) {
+            log.warn("cannot get meta or blocks for path:{}", path);
+            fileSourceSplits.add(new FileSourceSplit(path));
+            return fileSourceSplits;
+        }
+
+        long low = 0;
+        long high = low;
+        long splitCountAll = 0;
+        for (int i = 0; i < metadata.getBlocks().size(); i++) {
+            high = low + metadata.getBlocks().get(i).getCompressedSize();
+            FileSourceSplit split = new FileSourceSplit(path, low, high);
+            fileSourceSplits.add(split);
+            low = high;
+        }
+        log.info("generate parquet split count:{} for this file:{}", splitCountAll, path);
+        return fileSourceSplits;
+    }
+
+    /**
+     * todo: <br>
+     * In theory, batch column reading can improve reading performance.
+     */
+    @Override
+    public void read(FileSourceSplit split, Collector<SeaTunnelRow> output)
+            throws IOException, FileConnectorException {
+        String path = split.getFilePath();
+        String tableId = split.getTableId();
+        if (split.getMinRowIndex() == null || split.getMaxRowIndex() == null) {
+            log.debug(
+                    "minRowIndex or maxRowIndex is null, use fileBaseRead. fileSourceSplit:{}",
+                    split);
+        }
+        readInner(path, tableId, split.getMinRowIndex(), split.getMaxRowIndex(), output);
+    }
+
     @Override
     public void read(String path, String tableId, Collector<SeaTunnelRow> output)
+            throws FileConnectorException, IOException {
+        readInner(path, tableId, null, null, output);
+    }
+
+    public GenericData getDataModel() {
+        GenericData dataModel = new GenericData();
+        dataModel.addLogicalTypeConversion(new Conversions.DecimalConversion());
+        dataModel.addLogicalTypeConversion(new TimeConversions.DateConversion());
+        dataModel.addLogicalTypeConversion(new TimeConversions.LocalTimestampMillisConversion());
+        return dataModel;
+    }
+
+    private void readInner(
+            String path,
+            String tableId,
+            Long minRowIndex,
+            Long maxRowIndex,
+            Collector<SeaTunnelRow> output)
             throws FileConnectorException, IOException {
         if (Boolean.FALSE.equals(checkFileType(path))) {
             String errorMsg =
@@ -99,15 +200,17 @@ public class ParquetReadStrategy extends AbstractReadStrategy {
                         (configuration, userGroupInformation) ->
                                 HadoopInputFile.fromPath(filePath, configuration));
         int fieldsCount = seaTunnelRowType.getTotalFields();
-        GenericData dataModel = new GenericData();
-        dataModel.addLogicalTypeConversion(new Conversions.DecimalConversion());
-        dataModel.addLogicalTypeConversion(new TimeConversions.DateConversion());
-        dataModel.addLogicalTypeConversion(new TimeConversions.LocalTimestampMillisConversion());
         GenericRecord record;
+        boolean splitFile = minRowIndex != null && maxRowIndex != null;
         try (ParquetReader<GenericData.Record> reader =
-                AvroParquetReader.<GenericData.Record>builder(hadoopInputFile)
-                        .withDataModel(dataModel)
-                        .build()) {
+                splitFile
+                        ? AvroParquetReader.<GenericData.Record>builder(hadoopInputFile)
+                                .withDataModel(getDataModel())
+                                .withFileRange(minRowIndex, maxRowIndex)
+                                .build()
+                        : AvroParquetReader.<GenericData.Record>builder(hadoopInputFile)
+                                .withDataModel(getDataModel())
+                                .build()) {
             while ((record = reader.read()) != null) {
                 Object[] fields;
                 if (isMergePartition) {

@@ -60,7 +60,8 @@ public class BaseFileSourceReader implements SourceReader<SeaTunnelRow, FileSour
                 try {
                     // todo: If there is only one table , the tableId is not needed, but it's better
                     // to set this
-                    readStrategy.read(split.splitId(), "", output);
+                    //                    readStrategy.read(split.splitId(), "", output);
+                    readStrategy.read(split, output);
                 } catch (Exception e) {
                     throw CommonError.fileOperationFailed("SeaTunnel", "read", split.splitId(), e);
                 }

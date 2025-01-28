@@ -29,6 +29,7 @@ import org.apache.seatunnel.common.exception.CommonErrorCode;
 import org.apache.seatunnel.common.exception.SeaTunnelRuntimeException;
 import org.apache.seatunnel.connectors.seatunnel.file.config.HadoopConf;
 import org.apache.seatunnel.connectors.seatunnel.file.exception.FileConnectorException;
+import org.apache.seatunnel.connectors.seatunnel.file.source.split.FileSourceSplit;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -37,10 +38,16 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 public interface ReadStrategy extends Serializable, Closeable {
     void init(HadoopConf conf);
+
+    void read(FileSourceSplit split, Collector<SeaTunnelRow> output)
+            throws IOException, FileConnectorException;
+
+    Set<FileSourceSplit> getFileSourceSplits(String path);
 
     void read(String path, String tableId, Collector<SeaTunnelRow> output)
             throws IOException, FileConnectorException;

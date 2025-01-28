@@ -62,7 +62,7 @@ public abstract class BaseFileSource
     @Override
     public SourceSplitEnumerator<FileSourceSplit, FileSourceState> createEnumerator(
             SourceSplitEnumerator.Context<FileSourceSplit> enumeratorContext) throws Exception {
-        return new FileSourceSplitEnumerator(enumeratorContext, filePaths);
+        return new FileSourceSplitEnumerator(readStrategy, enumeratorContext, filePaths);
     }
 
     @Override
@@ -70,6 +70,7 @@ public abstract class BaseFileSource
             SourceSplitEnumerator.Context<FileSourceSplit> enumeratorContext,
             FileSourceState checkpointState)
             throws Exception {
-        return new FileSourceSplitEnumerator(enumeratorContext, filePaths, checkpointState);
+        return new FileSourceSplitEnumerator(
+                readStrategy, enumeratorContext, filePaths, checkpointState);
     }
 }
