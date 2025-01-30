@@ -51,6 +51,8 @@ import org.apache.seatunnel.engine.server.rest.RestJobExecutionEnvironment;
 import org.apache.seatunnel.engine.server.utils.NodeEngineUtil;
 import org.apache.seatunnel.engine.server.utils.RestUtil;
 
+import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.collections4.map.HashedMap;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 
@@ -73,6 +75,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -86,6 +89,7 @@ import static org.apache.seatunnel.api.common.metrics.MetricNames.SOURCE_RECEIVE
 import static org.apache.seatunnel.api.common.metrics.MetricNames.SOURCE_RECEIVED_BYTES_PER_SECONDS;
 import static org.apache.seatunnel.api.common.metrics.MetricNames.SOURCE_RECEIVED_COUNT;
 import static org.apache.seatunnel.api.common.metrics.MetricNames.SOURCE_RECEIVED_QPS;
+import static org.apache.seatunnel.api.common.metrics.MetricNames.TRANSFORM_OUTPUT_COUNT;
 import static org.apache.seatunnel.engine.server.rest.RestConstant.TABLE_SINK_WRITE_BYTES;
 import static org.apache.seatunnel.engine.server.rest.RestConstant.TABLE_SINK_WRITE_BYTES_PER_SECONDS;
 import static org.apache.seatunnel.engine.server.rest.RestConstant.TABLE_SINK_WRITE_COUNT;
@@ -268,7 +272,7 @@ public abstract class BaseService {
                     new HashMap<>(), // Source Received Bytes Per Second
                     new HashMap<>() // Sink Write Bytes Per Second
                 };
-
+        Map<String, Map<String, Map<String, JsonNode>>> transformMetricsMaps = new HashedMap();
         try {
             JsonNode jobMetricsStr = new ObjectMapper().readTree(jobMetrics);
 
@@ -276,6 +280,11 @@ public abstract class BaseService {
                     .fieldNames()
                     .forEachRemaining(
                             metricName -> {
+                                if (metricName.contains("Transform")) {
+                                    processTransformMetric(
+                                            transformMetricsMaps, metricName, jobMetricsStr);
+                                    return;
+                                }
                                 if (metricName.contains("#")) {
                                     String tableName =
                                             TablePath.of(metricName.split("#")[1]).getFullName();
@@ -308,7 +317,51 @@ public abstract class BaseService {
                 ArrayUtils.addAll(countMetricsNames, rateMetricsNames),
                 metricsSums.length);
 
+        transformMetricsMaps.forEach(
+                (metricName, metricMap) -> {
+                    Map<String, Object> transformMetricsMap = new TreeMap<>();
+                    metricMap.forEach(
+                            (tableName, pathMap) -> {
+                                transformMetricsMap.put(
+                                        tableName, aggregateTreeMap(pathMap, false));
+                            });
+
+                    metricsMap.put(metricName, transformMetricsMap);
+                });
+
         return metricsMap;
+    }
+
+    private void processTransformMetric(
+            Map<String, Map<String, Map<String, JsonNode>>> transformMetricsMaps,
+            String metricName,
+            JsonNode jobMetricsStr) {
+        if (metricName.contains(TRANSFORM_OUTPUT_COUNT)) {
+            processTransformMetric(
+                    transformMetricsMaps, TRANSFORM_OUTPUT_COUNT, metricName, jobMetricsStr);
+        }
+    }
+
+    private void processTransformMetric(
+            Map<String, Map<String, Map<String, JsonNode>>> transformMetricsMaps,
+            String key,
+            String metricName,
+            JsonNode jobMetricsStr) {
+        Map<String, Map<String, JsonNode>> transformMetricsMap = transformMetricsMaps.get(key);
+        if (MapUtils.isEmpty(transformMetricsMap)) {
+            transformMetricsMap = new TreeMap<>();
+            transformMetricsMaps.put(key, transformMetricsMap);
+        }
+        String tableName = TablePath.of(metricName.split("#")[1]).getFullName();
+        String path = metricName.split("#")[2];
+        Map<String, JsonNode> pathMap;
+        if (transformMetricsMap.containsKey(tableName)) {
+            pathMap = transformMetricsMap.get(tableName);
+        } else {
+            pathMap = new TreeMap<>();
+        }
+        pathMap.put(path, jobMetricsStr.get(metricName));
+        transformMetricsMap.put(tableName, pathMap);
     }
 
     private void processMetric(
@@ -413,6 +466,38 @@ public abstract class BaseService {
                                                         .mapToLong(
                                                                 node -> node.path("value").asLong())
                                                         .sum()));
+    }
+
+    private Map<String, Object> aggregateTreeMap(Map<String, JsonNode> inputMap, boolean isRate) {
+        return isRate
+                ? inputMap.entrySet().stream()
+                        .collect(
+                                Collectors.toMap(
+                                        Map.Entry::getKey,
+                                        entry ->
+                                                StreamSupport.stream(
+                                                                entry.getValue().spliterator(),
+                                                                false)
+                                                        .mapToDouble(
+                                                                node ->
+                                                                        node.path("value")
+                                                                                .asDouble())
+                                                        .sum(),
+                                        (v1, v2) -> v1,
+                                        TreeMap::new))
+                : inputMap.entrySet().stream()
+                        .collect(
+                                Collectors.toMap(
+                                        Map.Entry::getKey,
+                                        entry ->
+                                                StreamSupport.stream(
+                                                                entry.getValue().spliterator(),
+                                                                false)
+                                                        .mapToLong(
+                                                                node -> node.path("value").asLong())
+                                                        .sum(),
+                                        (v1, v2) -> v1,
+                                        TreeMap::new));
     }
 
     private JsonObject metricsToJsonObject(Map<String, Object> jobMetrics) {

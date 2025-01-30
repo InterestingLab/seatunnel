@@ -28,6 +28,7 @@ import java.util.Set;
 
 public class TransformAction extends AbstractAction {
     private final SeaTunnelTransform<?> transform;
+    private final String pluginOutput;
 
     public TransformAction(
             long id,
@@ -35,9 +36,11 @@ public class TransformAction extends AbstractAction {
             @NonNull List<Action> upstreams,
             @NonNull SeaTunnelTransform<?> transform,
             @NonNull Set<URL> jarUrls,
-            @NonNull Set<ConnectorJarIdentifier> connectorJarIdentifiers) {
+            @NonNull Set<ConnectorJarIdentifier> connectorJarIdentifiers,
+            String pluginOutput) {
         super(id, name, upstreams, jarUrls, connectorJarIdentifiers);
         this.transform = transform;
+        this.pluginOutput = pluginOutput;
     }
 
     public TransformAction(
@@ -45,12 +48,18 @@ public class TransformAction extends AbstractAction {
             @NonNull String name,
             @NonNull SeaTunnelTransform<?> transform,
             @NonNull Set<URL> jarUrls,
-            @NonNull Set<ConnectorJarIdentifier> connectorJarIdentifiers) {
+            @NonNull Set<ConnectorJarIdentifier> connectorJarIdentifiers,
+            String pluginOutput) {
         super(id, name, jarUrls, connectorJarIdentifiers);
         this.transform = transform;
+        this.pluginOutput = pluginOutput;
     }
 
     public SeaTunnelTransform<?> getTransform() {
         return transform;
+    }
+
+    public String getPluginOutput() {
+        return pluginOutput;
     }
 }

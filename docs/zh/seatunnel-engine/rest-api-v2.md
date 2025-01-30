@@ -161,6 +161,7 @@ seatunnel:
     "SinkWriteQPS": "",
     "SinkWriteBytes": "",
     "SinkWriteBytesPerSeconds": "",
+    "TransformOutputCount": {},
     "TableSourceReceivedCount": {},
     "TableSourceReceivedBytes": {},
     "TableSourceReceivedBytesPerSeconds": {},

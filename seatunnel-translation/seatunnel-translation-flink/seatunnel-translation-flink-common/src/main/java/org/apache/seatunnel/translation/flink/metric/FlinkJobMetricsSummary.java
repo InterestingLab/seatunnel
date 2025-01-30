@@ -21,10 +21,17 @@ import org.apache.seatunnel.api.common.metrics.MetricNames;
 import org.apache.seatunnel.common.utils.DateTimeUtils;
 import org.apache.seatunnel.common.utils.StringFormatUtils;
 
+import org.apache.commons.collections.MapUtils;
 import org.apache.flink.api.common.JobExecutionResult;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
+
+import static org.apache.seatunnel.api.common.metrics.MetricNames.TRANSFORM_OUTPUT_COUNT;
 
 public final class FlinkJobMetricsSummary {
 
@@ -82,25 +89,70 @@ public final class FlinkJobMetricsSummary {
 
     @Override
     public String toString() {
-        return StringFormatUtils.formatTable(
-                "Job Statistic Information",
-                "Start Time",
-                DateTimeUtils.toString(jobStartTime, DateTimeUtils.Formatter.YYYY_MM_DD_HH_MM_SS),
-                "End Time",
-                DateTimeUtils.toString(jobEndTime, DateTimeUtils.Formatter.YYYY_MM_DD_HH_MM_SS),
-                "Total Time(s)",
-                Duration.between(jobStartTime, jobEndTime).getSeconds(),
-                "Total Read Count",
-                jobExecutionResult
-                        .getAllAccumulatorResults()
-                        .get(MetricNames.SOURCE_RECEIVED_COUNT),
-                "Total Write Count",
-                jobExecutionResult.getAllAccumulatorResults().get(MetricNames.SINK_WRITE_COUNT),
-                "Total Read Bytes",
-                jobExecutionResult
-                        .getAllAccumulatorResults()
-                        .get(MetricNames.SOURCE_RECEIVED_BYTES),
-                "Total Write Bytes",
-                jobExecutionResult.getAllAccumulatorResults().get(MetricNames.SINK_WRITE_BYTES));
+        Map<String, Map<String, Object>> transformCountMap = new TreeMap<>();
+
+        // Transform metrics
+        jobExecutionResult.getAllAccumulatorResults().entrySet().stream()
+                .filter(entry -> entry.getKey().contains(TRANSFORM_OUTPUT_COUNT))
+                .forEach(
+                        (metric) -> {
+                            String tableName = metric.getKey().split("#")[1];
+                            String path = metric.getKey().split("#")[2];
+                            if (transformCountMap.containsKey(tableName)) {
+                                Map<String, Object> metricMap = transformCountMap.get(tableName);
+                                metricMap.put(path, metric.getValue());
+                            } else {
+                                Map<String, Object> metricMap = new HashMap<>();
+                                metricMap.put(path, metric.getValue());
+                                transformCountMap.put(tableName, metricMap);
+                            }
+                        });
+
+        StringBuilder logMessage = new StringBuilder();
+        logMessage.append(
+                StringFormatUtils.formatTable(
+                        "Job Statistic Information",
+                        "Start Time",
+                        DateTimeUtils.toString(
+                                jobStartTime, DateTimeUtils.Formatter.YYYY_MM_DD_HH_MM_SS),
+                        "End Time",
+                        DateTimeUtils.toString(
+                                jobEndTime, DateTimeUtils.Formatter.YYYY_MM_DD_HH_MM_SS),
+                        "Total Time(s)",
+                        Duration.between(jobStartTime, jobEndTime).getSeconds(),
+                        "Total Read Count",
+                        jobExecutionResult
+                                .getAllAccumulatorResults()
+                                .get(MetricNames.SOURCE_RECEIVED_COUNT),
+                        "Total Write Count",
+                        jobExecutionResult
+                                .getAllAccumulatorResults()
+                                .get(MetricNames.SINK_WRITE_COUNT),
+                        "Total Read Bytes",
+                        jobExecutionResult
+                                .getAllAccumulatorResults()
+                                .get(MetricNames.SOURCE_RECEIVED_BYTES),
+                        "Total Write Bytes",
+                        jobExecutionResult
+                                .getAllAccumulatorResults()
+                                .get(MetricNames.SINK_WRITE_BYTES)));
+
+        if (MapUtils.isNotEmpty(transformCountMap)) {
+            transformCountMap.forEach(
+                    (tableName, metrics) -> {
+                        String[] transformInfos = new String[metrics.entrySet().size() * 2 + 2];
+                        transformInfos[0] = tableName + " Information";
+                        int index = 0;
+                        for (Map.Entry<String, Object> entry : metrics.entrySet()) {
+                            transformInfos[++index] = entry.getKey();
+                            transformInfos[++index] = String.valueOf(entry.getValue());
+                        }
+                        if (Objects.nonNull(transformInfos)) {
+                            logMessage.append(StringFormatUtils.formatTable(transformInfos));
+                        }
+                    });
+        }
+
+        return logMessage.toString();
     }
 }

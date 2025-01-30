@@ -471,7 +471,8 @@ public class MultipleTableJobConfigParser {
                         new ArrayList<>(inputActions),
                         transform,
                         jarUrls,
-                        new HashSet<>());
+                        new HashSet<>(),
+                        readonlyConfig.get(CommonOptions.PLUGIN_OUTPUT));
         transformAction.setParallelism(parallelism);
 
         List<Tuple2<CatalogTable, Action>> actions = new ArrayList<>();

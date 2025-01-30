@@ -237,7 +237,8 @@ public abstract class SeaTunnelTask extends AbstractTask {
                                 (TransformChainAction) f.getAction(),
                                 this,
                                 new SeaTunnelTransformCollector(flowLifeCycles),
-                                completableFuture);
+                                completableFuture,
+                                this.getMetricsContext());
             } else if (f.getAction() instanceof ShuffleAction) {
                 ShuffleAction shuffleAction = (ShuffleAction) f.getAction();
                 HazelcastInstance hazelcastInstance = getExecutionContext().getInstance();

@@ -22,6 +22,7 @@ import org.apache.seatunnel.shade.com.fasterxml.jackson.core.type.TypeReference;
 import org.apache.seatunnel.shade.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.seatunnel.shade.com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.apache.seatunnel.api.table.catalog.TablePath;
 import org.apache.seatunnel.engine.client.SeaTunnelHazelcastClient;
 import org.apache.seatunnel.engine.client.util.ContentFormatUtil;
 import org.apache.seatunnel.engine.common.Constant;
@@ -41,9 +42,19 @@ import org.apache.seatunnel.engine.core.protocol.codec.SeaTunnelGetRunningJobMet
 import org.apache.seatunnel.engine.core.protocol.codec.SeaTunnelListJobStatusCodec;
 import org.apache.seatunnel.engine.core.protocol.codec.SeaTunnelSavePointJobCodec;
 
+import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.collections4.map.HashedMap;
+
 import lombok.NonNull;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
+
+import static org.apache.seatunnel.api.common.metrics.MetricNames.TRANSFORM_OUTPUT_COUNT;
 
 public class JobClient {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -154,6 +165,7 @@ public class JobClient {
     public JobMetricsRunner.JobMetricsSummary getJobMetricsSummary(Long jobId) {
         long sourceReadCount = 0L;
         long sinkWriteCount = 0L;
+        Map<String, Map<String, Object>> transformCountMap = new HashMap<>();
         String jobMetrics = getJobMetrics(jobId);
         try {
             JsonNode jsonNode = OBJECT_MAPPER.readTree(jobMetrics);
@@ -165,11 +177,98 @@ public class JobClient {
                 sourceReadCount += sourceReader.get("value").asLong();
                 sinkWriteCount += sinkWriter.get("value").asLong();
             }
-            return new JobMetricsRunner.JobMetricsSummary(sourceReadCount, sinkWriteCount);
+            transformCountMap = extractTransformKeys(jsonNode);
+            return new JobMetricsRunner.JobMetricsSummary(
+                    sourceReadCount, sinkWriteCount, transformCountMap);
             // Add NullPointerException because of metrics information can be empty like {}
         } catch (JsonProcessingException | NullPointerException e) {
-            return new JobMetricsRunner.JobMetricsSummary(sourceReadCount, sinkWriteCount);
+            return new JobMetricsRunner.JobMetricsSummary(
+                    sourceReadCount, sinkWriteCount, transformCountMap);
         }
+    }
+
+    private Map<String, Map<String, Object>> extractTransformKeys(JsonNode rootNode) {
+        Map<String, Map<String, Object>> transformCountMap = new TreeMap<>();
+        Map<String, Map<String, Map<String, JsonNode>>> transformMetricsMaps = new HashedMap();
+        rootNode.fieldNames()
+                .forEachRemaining(
+                        metricName -> {
+                            if (metricName.contains("Transform")) {
+                                processTransformMetric(transformMetricsMaps, metricName, rootNode);
+                            }
+                        });
+        transformMetricsMaps.forEach(
+                (metricName, metricMap) -> {
+                    metricMap.forEach(
+                            (tableName, pathMap) -> {
+                                transformCountMap.put(tableName, aggregateTreeMap(pathMap, false));
+                            });
+                });
+        return transformCountMap;
+    }
+
+    private Map<String, Object> aggregateTreeMap(Map<String, JsonNode> inputMap, boolean isRate) {
+        return isRate
+                ? inputMap.entrySet().stream()
+                        .collect(
+                                Collectors.toMap(
+                                        Map.Entry::getKey,
+                                        entry ->
+                                                StreamSupport.stream(
+                                                                entry.getValue().spliterator(),
+                                                                false)
+                                                        .mapToDouble(
+                                                                node ->
+                                                                        node.path("value")
+                                                                                .asDouble())
+                                                        .sum(),
+                                        (v1, v2) -> v1,
+                                        TreeMap::new))
+                : inputMap.entrySet().stream()
+                        .collect(
+                                Collectors.toMap(
+                                        Map.Entry::getKey,
+                                        entry ->
+                                                StreamSupport.stream(
+                                                                entry.getValue().spliterator(),
+                                                                false)
+                                                        .mapToLong(
+                                                                node -> node.path("value").asLong())
+                                                        .sum(),
+                                        (v1, v2) -> v1,
+                                        TreeMap::new));
+    }
+
+    private void processTransformMetric(
+            Map<String, Map<String, Map<String, JsonNode>>> transformMetricsMaps,
+            String metricName,
+            JsonNode jobMetricsStr) {
+        if (metricName.contains(TRANSFORM_OUTPUT_COUNT)) {
+            processTransformMetric(
+                    transformMetricsMaps, TRANSFORM_OUTPUT_COUNT, metricName, jobMetricsStr);
+        }
+    }
+
+    private void processTransformMetric(
+            Map<String, Map<String, Map<String, JsonNode>>> transformMetricsMaps,
+            String key,
+            String metricName,
+            JsonNode jobMetricsStr) {
+        Map<String, Map<String, JsonNode>> transformMetricsMap = transformMetricsMaps.get(key);
+        if (MapUtils.isEmpty(transformMetricsMap)) {
+            transformMetricsMap = new TreeMap<>();
+            transformMetricsMaps.put(key, transformMetricsMap);
+        }
+        String tableName = TablePath.of(metricName.split("#")[1]).getFullName();
+        String path = metricName.split("#")[2];
+        Map<String, JsonNode> pathMap;
+        if (transformMetricsMap.containsKey(tableName)) {
+            pathMap = transformMetricsMap.get(tableName);
+        } else {
+            pathMap = new TreeMap<>();
+        }
+        pathMap.put(path, jobMetricsStr.get(metricName));
+        transformMetricsMap.put(tableName, pathMap);
     }
 
     public List<JobPipelineCheckpointData> getCheckpointData(Long jobId) {

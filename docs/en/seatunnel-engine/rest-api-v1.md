@@ -259,6 +259,7 @@ This API has been deprecated, please use /hazelcast/rest/maps/job-info/:jobId in
     "SinkWriteQPS": "",
     "SinkWriteBytes": "",
     "SinkWriteBytesPerSeconds": "",
+    "TransformOutputCount": {},
     "TableSourceReceivedCount": {},
     "TableSourceReceivedBytes": {},
     "TableSourceReceivedBytesPerSeconds": {},

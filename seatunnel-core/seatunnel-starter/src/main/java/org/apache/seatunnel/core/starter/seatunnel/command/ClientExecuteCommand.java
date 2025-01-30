@@ -43,6 +43,7 @@ import org.apache.seatunnel.engine.core.job.JobResult;
 import org.apache.seatunnel.engine.core.job.JobStatus;
 import org.apache.seatunnel.engine.server.SeaTunnelNodeContext;
 
+import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import com.hazelcast.client.config.ClientConfig;
@@ -56,6 +57,8 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -229,7 +232,8 @@ public class ClientExecuteCommand implements Command<ClientCommandArgs> {
         } finally {
             if (jobMetricsSummary != null) {
                 // print job statistics information when job finished
-                log.info(
+                StringBuilder logMessage = new StringBuilder();
+                logMessage.append(
                         StringFormatUtils.formatTable(
                                 "Job Statistic Information",
                                 "Start Time",
@@ -247,6 +251,28 @@ public class ClientExecuteCommand implements Command<ClientCommandArgs> {
                                 "Total Failed Count",
                                 jobMetricsSummary.getSourceReadCount()
                                         - jobMetricsSummary.getSinkWriteCount()));
+
+                if (MapUtils.isNotEmpty(jobMetricsSummary.getTransformMetricsMaps())) {
+                    jobMetricsSummary
+                            .getTransformMetricsMaps()
+                            .forEach(
+                                    (tableName, metrics) -> {
+                                        String[] transformInfos =
+                                                new String[metrics.entrySet().size() * 2 + 2];
+                                        transformInfos[0] = tableName + " Information";
+                                        int index = 0;
+                                        for (Map.Entry<String, Object> entry : metrics.entrySet()) {
+                                            transformInfos[++index] = entry.getKey();
+                                            transformInfos[++index] =
+                                                    String.valueOf(entry.getValue());
+                                        }
+                                        if (Objects.nonNull(transformInfos)) {
+                                            logMessage.append(
+                                                    StringFormatUtils.formatTable(transformInfos));
+                                        }
+                                    });
+                }
+                log.info("{}", logMessage);
             }
             closeClient();
         }

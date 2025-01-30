@@ -20,6 +20,8 @@ package org.apache.seatunnel.core.starter.flink.execution;
 import org.apache.seatunnel.shade.com.typesafe.config.Config;
 
 import org.apache.seatunnel.api.common.JobContext;
+import org.apache.seatunnel.api.common.metrics.MetricNames;
+import org.apache.seatunnel.api.common.metrics.MetricsContext;
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.configuration.util.ConfigValidator;
 import org.apache.seatunnel.api.table.factory.TableTransformFactory;
@@ -32,12 +34,16 @@ import org.apache.seatunnel.core.starter.exception.TaskExecuteException;
 import org.apache.seatunnel.core.starter.execution.PluginUtil;
 import org.apache.seatunnel.plugin.discovery.seatunnel.SeaTunnelFactoryDiscovery;
 import org.apache.seatunnel.plugin.discovery.seatunnel.SeaTunnelTransformPluginDiscovery;
+import org.apache.seatunnel.translation.flink.metric.FlinkMetricContext;
 
 import org.apache.commons.collections.CollectionUtils;
-import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.operators.StreamMap;
+import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.apache.flink.util.Collector;
 
 import java.net.URL;
@@ -103,24 +109,27 @@ public class TransformExecuteProcessor
                                         LinkedHashMap::new));
 
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        int index = 0;
         for (int i = 0; i < plugins.size(); i++) {
             try {
                 Config pluginConfig = pluginConfigs.get(i);
+                ReadonlyConfig options = ReadonlyConfig.fromConfig(pluginConfig);
                 DataStreamTableInfo stream =
                         fromSourceTable(pluginConfig, new ArrayList<>(outputTables.values()))
                                 .orElse(input);
                 TableTransformFactory factory = plugins.get(i);
                 TableTransformFactoryContext context =
                         new TableTransformFactoryContext(
-                                stream.getCatalogTables(),
-                                ReadonlyConfig.fromConfig(pluginConfig),
-                                classLoader);
+                                stream.getCatalogTables(), options, classLoader);
                 ConfigValidator.of(context.getOptions()).validate(factory.optionRule());
                 SeaTunnelTransform transform = factory.createTransform(context).createTransform();
 
                 transform.setJobContext(jobContext);
+                String metricName =
+                        String.format("Transform[%s]-%s", transform.getPluginName(), index++);
+                String pluginOutput = options.get(PLUGIN_OUTPUT);
                 DataStream<SeaTunnelRow> inputStream =
-                        flinkTransform(transform, stream.getDataStream());
+                        flinkTransform(transform, stream.getDataStream(), metricName, pluginOutput);
                 String pluginOutputIdentifier =
                         ReadonlyConfig.fromConfig(pluginConfig).get(PLUGIN_OUTPUT);
                 // TODO transform support multi tables
@@ -142,10 +151,14 @@ public class TransformExecuteProcessor
     }
 
     protected DataStream<SeaTunnelRow> flinkTransform(
-            SeaTunnelTransform transform, DataStream<SeaTunnelRow> stream) {
+            SeaTunnelTransform transform,
+            DataStream<SeaTunnelRow> stream,
+            String metricName,
+            String pluginOutput) {
         if (transform instanceof SeaTunnelFlatMapTransform) {
             return stream.flatMap(
-                    new ArrayFlatMap(transform), TypeInformation.of(SeaTunnelRow.class));
+                    new ArrayFlatMap(transform, metricName, pluginOutput),
+                    TypeInformation.of(SeaTunnelRow.class));
         }
 
         return stream.transform(
@@ -155,20 +168,59 @@ public class TransformExecuteProcessor
                                 flinkRuntimeEnvironment
                                         .getStreamExecutionEnvironment()
                                         .clean(
-                                                row ->
-                                                        ((SeaTunnelMapTransform<SeaTunnelRow>)
-                                                                        transform)
-                                                                .map(row))))
+                                                new FlinkRichMapFunction(
+                                                        transform, metricName, pluginOutput))))
                 // null value shouldn't be passed to downstream
                 .filter(Objects::nonNull);
     }
 
-    public static class ArrayFlatMap implements FlatMapFunction<SeaTunnelRow, SeaTunnelRow> {
-
+    public static class FlinkRichMapFunction extends RichMapFunction<SeaTunnelRow, SeaTunnelRow> {
+        private MetricsContext metricsContext;
         private SeaTunnelTransform transform;
+        private final String metricName;
+        private final String pluginOutput;
 
-        public ArrayFlatMap(SeaTunnelTransform transform) {
+        public FlinkRichMapFunction(
+                SeaTunnelTransform transform, String metricName, String pluginOutput) {
             this.transform = transform;
+            this.metricName = metricName;
+            this.pluginOutput = pluginOutput;
+        }
+
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            metricsContext = new FlinkMetricContext((StreamingRuntimeContext) getRuntimeContext());
+        }
+
+        @Override
+        public SeaTunnelRow map(SeaTunnelRow row) throws Exception {
+            if (Objects.isNull(row)) {
+                return null;
+            }
+            SeaTunnelRow rowResult = ((SeaTunnelMapTransform<SeaTunnelRow>) transform).map(row);
+            if (rowResult != null) {
+                String tableId = pluginOutput == null ? rowResult.getTableId() : pluginOutput;
+                updateMetric(metricName, tableId, metricsContext);
+            }
+            return rowResult;
+        }
+    }
+
+    public static class ArrayFlatMap extends RichFlatMapFunction<SeaTunnelRow, SeaTunnelRow> {
+        private MetricsContext metricsContext;
+        private SeaTunnelTransform transform;
+        private final String metricName;
+        private final String pluginOutput;
+
+        public ArrayFlatMap(SeaTunnelTransform transform, String metricName, String pluginOutput) {
+            this.transform = transform;
+            this.metricName = metricName;
+            this.pluginOutput = pluginOutput;
+        }
+
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            metricsContext = new FlinkMetricContext((StreamingRuntimeContext) getRuntimeContext());
         }
 
         @Override
@@ -177,9 +229,25 @@ public class TransformExecuteProcessor
                     ((SeaTunnelFlatMapTransform<SeaTunnelRow>) transform).flatMap(row);
             if (CollectionUtils.isNotEmpty(rows)) {
                 for (SeaTunnelRow rowResult : rows) {
+                    String tableId = pluginOutput == null ? rowResult.getTableId() : pluginOutput;
+                    updateMetric(metricName, tableId, metricsContext);
                     collector.collect(rowResult);
                 }
             }
+        }
+    }
+
+    private static void updateMetric(
+            String metricName, String tableId, MetricsContext metricsContext) {
+        StringBuilder metricNameBuilder = new StringBuilder();
+        metricNameBuilder
+                .append(MetricNames.TRANSFORM_OUTPUT_COUNT)
+                .append("#")
+                .append(metricName)
+                .append("#")
+                .append(tableId);
+        if (metricsContext != null) {
+            metricsContext.counter(metricNameBuilder.toString()).inc();
         }
     }
 }

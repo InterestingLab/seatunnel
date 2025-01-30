@@ -33,4 +33,5 @@ public final class MetricNames {
     public static final String SINK_WRITE_BYTES = "SinkWriteBytes";
     public static final String SINK_WRITE_QPS = "SinkWriteQPS";
     public static final String SINK_WRITE_BYTES_PER_SECONDS = "SinkWriteBytesPerSeconds";
+    public static final String TRANSFORM_OUTPUT_COUNT = "TransformOutputCount";
 }

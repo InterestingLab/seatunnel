@@ -132,7 +132,25 @@ public class MultiTableMetricsIT {
                                             equalTo(String.valueOf(dataSize * 10)))
                                     .body(
                                             "metrics.TableSinkWriteBytes.'fake.public.table2'",
-                                            equalTo(String.valueOf(dataSize * 5)));
+                                            equalTo(String.valueOf(dataSize * 5)))
+                                    .body(
+                                            "metrics.TransformOutputCount.'Transform[0]-Sql'.'fake3'",
+                                            equalTo("10"))
+                                    .body(
+                                            "metrics.TransformOutputCount.'Transform[1]-Sql'.'fake4'",
+                                            equalTo("10"))
+                                    .body(
+                                            "metrics.TransformOutputCount.'Transform[2]-Sql'.'fake5'",
+                                            equalTo("10"))
+                                    .body(
+                                            "metrics.TransformOutputCount.'Transform[3]-Sql'.'fake6'",
+                                            equalTo("5"))
+                                    .body(
+                                            "metrics.TransformOutputCount.'Transform[4]-Sql'.'fake7'",
+                                            equalTo("5"))
+                                    .body(
+                                            "metrics.TransformOutputCount.'Transform[5]-Sql'.'fake8'",
+                                            equalTo("5"));
                             Assertions.assertTrue(
                                     Double.parseDouble(response.path("metrics.SourceReceivedQPS"))
                                                     > 0
@@ -178,6 +196,35 @@ public class MultiTableMetricsIT {
                                             && Double.parseDouble(
                                                             response.path(
                                                                     "metrics.TableSinkWriteBytesPerSeconds.'fake.public.table2'"))
+                                                    > 0
+                                            && Double.parseDouble(
+                                                            response.path(
+                                                                    "metrics.TransformOutputCount.'Transform[0]-Sql'.'fake3'"))
+                                                    > 0
+                                            && Double.parseDouble(
+                                                            response.path(
+                                                                    "metrics.TransformOutputCount.'Transform[1]-Sql'"
+                                                                            + ".'fake4'"))
+                                                    > 0
+                                            && Double.parseDouble(
+                                                            response.path(
+                                                                    "metrics.TransformOutputCount.'Transform[2]-Sql'"
+                                                                            + ".'fake5'"))
+                                                    > 0
+                                            && Double.parseDouble(
+                                                            response.path(
+                                                                    "metrics.TransformOutputCount.'Transform[3]-Sql'"
+                                                                            + ".'fake6'"))
+                                                    > 0
+                                            && Double.parseDouble(
+                                                            response.path(
+                                                                    "metrics.TransformOutputCount.'Transform[4]-Sql'"
+                                                                            + ".'fake7'"))
+                                                    > 0
+                                            && Double.parseDouble(
+                                                            response.path(
+                                                                    "metrics.TransformOutputCount.'Transform[5]-Sql'"
+                                                                            + ".'fake8'"))
                                                     > 0);
                         });
     }
