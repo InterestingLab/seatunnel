@@ -19,6 +19,7 @@ package org.apache.seatunnel.transform.common;
 
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
+import org.apache.seatunnel.api.table.schema.event.SchemaChangeEvent;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.api.transform.SeaTunnelFlatMapTransform;
 
@@ -42,5 +43,11 @@ public abstract class AbstractMultiCatalogFlatMapTransform extends AbstractMulti
         }
         return ((SeaTunnelFlatMapTransform<SeaTunnelRow>) transformMap.get(row.getTableId()))
                 .flatMap(row);
+    }
+
+    @Override
+    public SchemaChangeEvent mapSchemaChangeEvent(SchemaChangeEvent event) {
+
+        return transformMap.get(event.tablePath().getFullName()).mapSchemaChangeEvent(event);
     }
 }

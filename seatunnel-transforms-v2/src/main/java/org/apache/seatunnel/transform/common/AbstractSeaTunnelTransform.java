@@ -59,6 +59,12 @@ public abstract class AbstractSeaTunnelTransform<T, R> implements SeaTunnelTrans
         return outputCatalogTable;
     }
 
+    public void restProducedCatalogTable() {
+        synchronized (this) {
+            outputCatalogTable = transformCatalogTable();
+        }
+    }
+
     @Override
     public List<CatalogTable> getProducedCatalogTables() {
         return Collections.singletonList(getProducedCatalogTable());

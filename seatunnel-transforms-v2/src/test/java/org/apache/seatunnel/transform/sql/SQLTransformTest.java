@@ -17,12 +17,21 @@
 
 package org.apache.seatunnel.transform.sql;
 
+import org.apache.seatunnel.shade.com.google.common.collect.Lists;
+
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.CatalogTableUtil;
+import org.apache.seatunnel.api.table.catalog.Column;
+import org.apache.seatunnel.api.table.catalog.ConstraintKey;
 import org.apache.seatunnel.api.table.catalog.PhysicalColumn;
+import org.apache.seatunnel.api.table.catalog.PrimaryKey;
 import org.apache.seatunnel.api.table.catalog.TableIdentifier;
 import org.apache.seatunnel.api.table.catalog.TableSchema;
+import org.apache.seatunnel.api.table.schema.event.AlterTableAddColumnEvent;
+import org.apache.seatunnel.api.table.schema.event.AlterTableChangeColumnEvent;
+import org.apache.seatunnel.api.table.schema.event.AlterTableDropColumnEvent;
+import org.apache.seatunnel.api.table.schema.event.AlterTableModifyColumnEvent;
 import org.apache.seatunnel.api.table.type.BasicType;
 import org.apache.seatunnel.api.table.type.LocalTimeType;
 import org.apache.seatunnel.api.table.type.MapType;
@@ -34,10 +43,12 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 public class SQLTransformTest {
 
@@ -281,5 +292,220 @@ public class SQLTransformTest {
         Assertions.assertEquals(
                 BasicType.STRING_TYPE, tableSchema.getColumns().get(1).getDataType());
         Assertions.assertEquals("a", result.get(0).getField(1));
+    }
+
+    @Test
+    public void testSchemaChange() {
+        CatalogTable catalogTable =
+                CatalogTable.of(
+                        TableIdentifier.of(TEST_NAME, TEST_NAME, null, TEST_NAME),
+                        TableSchema.builder()
+                                .column(
+                                        PhysicalColumn.of(
+                                                "id",
+                                                BasicType.LONG_TYPE,
+                                                null,
+                                                null,
+                                                false,
+                                                null,
+                                                null))
+                                .column(
+                                        PhysicalColumn.of(
+                                                "name",
+                                                BasicType.STRING_TYPE,
+                                                null,
+                                                null,
+                                                true,
+                                                null,
+                                                null))
+                                .column(
+                                        PhysicalColumn.of(
+                                                "age",
+                                                BasicType.LONG_TYPE,
+                                                null,
+                                                null,
+                                                true,
+                                                null,
+                                                null))
+                                .primaryKey(PrimaryKey.of("pk1", Arrays.asList("id")))
+                                .constraintKey(
+                                        ConstraintKey.of(
+                                                ConstraintKey.ConstraintType.UNIQUE_KEY,
+                                                "uk1",
+                                                Arrays.asList(
+                                                        ConstraintKey.ConstraintKeyColumn.of(
+                                                                "name",
+                                                                ConstraintKey.ColumnSortType.ASC),
+                                                        ConstraintKey.ConstraintKeyColumn.of(
+                                                                "age",
+                                                                ConstraintKey.ColumnSortType.ASC))))
+                                .build(),
+                        Collections.emptyMap(),
+                        Collections.singletonList("name"),
+                        null);
+
+        ReadonlyConfig config =
+                ReadonlyConfig.fromMap(
+                        new HashMap<String, Object>() {
+                            {
+                                put("query", "select * from dual");
+                            }
+                        });
+        List<SeaTunnelRow> result;
+        SQLTransform transform = new SQLTransform(config, catalogTable);
+        result =
+                transform.transformRow(
+                        new SeaTunnelRow(
+                                new Object[] {Integer.valueOf(1), "Cosmos", Integer.valueOf(30)}));
+        List<String> columnNames;
+        List<String> columnType;
+        List<String> assertNames;
+        List<String> assertTypes;
+        Object[] columnValues;
+        Object[] assertValue;
+
+        columnNames =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map(Column::getName)
+                        .collect(Collectors.toList());
+        columnType =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map((e) -> e.getDataType().getSqlType().name())
+                        .collect(Collectors.toList());
+        assertNames = Lists.newArrayList("id", "name", "age");
+        assertTypes = Lists.newArrayList("BIGINT", "STRING", "BIGINT");
+
+        columnValues = result.get(0).getFields();
+        assertValue = new Object[] {Integer.valueOf(1), "Cosmos", Integer.valueOf(30)};
+        Assertions.assertIterableEquals(columnNames, assertNames);
+        Assertions.assertIterableEquals(columnType, assertTypes);
+        Assertions.assertArrayEquals(columnValues, assertValue);
+
+        // test add column
+        AlterTableAddColumnEvent addColumnEvent =
+                AlterTableAddColumnEvent.add(
+                        catalogTable.getTableId(),
+                        PhysicalColumn.of("f4", BasicType.LONG_TYPE, null, null, true, null, null));
+        transform.mapSchemaChangeEvent(addColumnEvent);
+
+        result =
+                transform.transformRow(
+                        new SeaTunnelRow(
+                                new Object[] {
+                                    Integer.valueOf(1),
+                                    "Cosmos",
+                                    Integer.valueOf(30),
+                                    Integer.valueOf(14)
+                                }));
+        columnNames =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map(Column::getName)
+                        .collect(Collectors.toList());
+        columnType =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map((e) -> e.getDataType().getSqlType().name())
+                        .collect(Collectors.toList());
+        assertNames = Lists.newArrayList("id", "name", "age", "f4");
+        assertTypes = Lists.newArrayList("BIGINT", "STRING", "BIGINT", "BIGINT");
+
+        columnValues = result.get(0).getFields();
+        assertValue =
+                new Object[] {
+                    Integer.valueOf(1), "Cosmos", Integer.valueOf(30), Integer.valueOf(14)
+                };
+        Assertions.assertIterableEquals(columnNames, assertNames);
+        Assertions.assertIterableEquals(columnType, assertTypes);
+        Assertions.assertArrayEquals(columnValues, assertValue);
+
+        // test modify column
+        AlterTableModifyColumnEvent modifyColumnEvent =
+                AlterTableModifyColumnEvent.modify(
+                        catalogTable.getTableId(),
+                        PhysicalColumn.of(
+                                "f4", BasicType.STRING_TYPE, null, null, true, null, null));
+        transform.mapSchemaChangeEvent(modifyColumnEvent);
+        result =
+                transform.transformRow(
+                        new SeaTunnelRow(
+                                new Object[] {
+                                    Integer.valueOf(1), "Cosmos", Integer.valueOf(30), "Cosmos"
+                                }));
+        columnNames =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map(Column::getName)
+                        .collect(Collectors.toList());
+        columnType =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map((e) -> e.getDataType().getSqlType().name())
+                        .collect(Collectors.toList());
+        assertNames = Lists.newArrayList("id", "name", "age", "f4");
+        assertTypes = Lists.newArrayList("BIGINT", "STRING", "BIGINT", "STRING");
+
+        columnValues = result.get(0).getFields();
+        assertValue = new Object[] {Integer.valueOf(1), "Cosmos", Integer.valueOf(30), "Cosmos"};
+        Assertions.assertIterableEquals(columnNames, assertNames);
+        Assertions.assertIterableEquals(columnType, assertTypes);
+        Assertions.assertArrayEquals(columnValues, assertValue);
+
+        // test change column
+        AlterTableChangeColumnEvent changeColumnEvent =
+                AlterTableChangeColumnEvent.change(
+                        catalogTable.getTableId(),
+                        "f4",
+                        PhysicalColumn.of("f5", BasicType.INT_TYPE, null, null, true, null, null));
+        transform.mapSchemaChangeEvent(changeColumnEvent);
+        result =
+                transform.transformRow(
+                        new SeaTunnelRow(
+                                new Object[] {
+                                    Integer.valueOf(1),
+                                    "Cosmos",
+                                    Integer.valueOf(30),
+                                    Integer.valueOf(14)
+                                }));
+        columnNames =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map(Column::getName)
+                        .collect(Collectors.toList());
+        columnType =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map((e) -> e.getDataType().getSqlType().name())
+                        .collect(Collectors.toList());
+        assertNames = Lists.newArrayList("id", "name", "age", "f5");
+        assertTypes = Lists.newArrayList("BIGINT", "STRING", "BIGINT", "INT");
+
+        columnValues = result.get(0).getFields();
+        assertValue =
+                new Object[] {
+                    Integer.valueOf(1), "Cosmos", Integer.valueOf(30), Integer.valueOf(14)
+                };
+        Assertions.assertIterableEquals(columnNames, assertNames);
+        Assertions.assertIterableEquals(columnType, assertTypes);
+        Assertions.assertArrayEquals(columnValues, assertValue);
+
+        // test drop column
+        AlterTableDropColumnEvent dropColumnEvent =
+                new AlterTableDropColumnEvent(catalogTable.getTableId(), "f5");
+        transform.mapSchemaChangeEvent(dropColumnEvent);
+        result =
+                transform.transformRow(
+                        new SeaTunnelRow(
+                                new Object[] {Integer.valueOf(1), "Cosmos", Integer.valueOf(30)}));
+        columnNames =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map(Column::getName)
+                        .collect(Collectors.toList());
+        columnType =
+                transform.getProducedCatalogTable().getTableSchema().getColumns().stream()
+                        .map((e) -> e.getDataType().getSqlType().name())
+                        .collect(Collectors.toList());
+        assertNames = Lists.newArrayList("id", "name", "age");
+        assertTypes = Lists.newArrayList("BIGINT", "STRING", "BIGINT");
+
+        columnValues = result.get(0).getFields();
+        assertValue = new Object[] {Integer.valueOf(1), "Cosmos", Integer.valueOf(30)};
+        Assertions.assertIterableEquals(columnNames, assertNames);
+        Assertions.assertIterableEquals(columnType, assertTypes);
+        Assertions.assertArrayEquals(columnValues, assertValue);
     }
 }
